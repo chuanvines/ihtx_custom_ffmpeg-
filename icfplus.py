@@ -35,22 +35,14 @@ def render_args(args, i):
     return out
 
 
-def ffprobe(infile, args):
-    cmd = ["ffprobe", "-v", "error"] + args + ["-of", "default=nokey=1:noprint_wrappers=1", infile]
-    rc, out = run(cmd)
-    return out.strip() if rc == 0 else ""
-
-
 def main():
     argv = sys.argv[1:]
     hidelogs = "--hidelogs" in argv
     argv = [a for a in argv if a != "--hidelogs"]
     if len(argv) < 7:
         print(
-            "Usage: icf+.exe [--hidelogs] <input> <output> <exports> <dur_frac> <no_trim> "
-            "<input_format> <output_format> [ffmpeg args...]\n"
-            "Multipitch mode: make the last ffmpeg arg an output filename containing "
-            "$i, e.g. ... mov mp4 -qp 1 -c:a pcm_s16le a$i.mp4",
+            "Usage: icf+.exe [--hidelogs] <input> <output> <exports> <dur_frac> "
+            "<no_trim> <input_format> <output_format> [ffmpeg args...]",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -114,45 +106,11 @@ def main():
                     os.remove(f)
                 except OSError:
                     pass
-            if multipitch and re.match(r"^(a\d+\.mp4|h\d+\.wav|out\d+\.wav|.*\.pitch\.mp4|pitch_multi_shifter)$", f):
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
         if os.path.isfile(log):
             try:
                 os.remove(log)
             except OSError:
                 pass
-
-    def ensure_program():
-        if os.path.isfile("program"):
-            return
-        rc, _ = run(["curl", "-sSL", "https://file.garden/aTXso15ukD3mnuPI/multipitch", "-o", "pitch_multi_shifter"])
-        if rc != 0 or not os.path.isfile("pitch_multi_shifter"):
-            print("failed to download multipitch program", file=sys.stderr)
-            fail()
-        os.replace("pitch_multi_shifter", "program")
-        try:
-            os.chmod("program", 0o755)
-        except OSError:
-            pass
-
-    def pitch_export(i, base):
-        run_ffmpeg(["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", base, "-af", "asetrate=%s/1" % sr, "h%d.wav" % i])
-        rc, _ = run([os.path.join(".", "program"), "h%d.wav" % i, "out%d.wav" % i,
-                     "7", "-12", "--no-normalize"], log=log)
-        if rc != 0:
-            print("multipitch program failed on export %d" % i, file=sys.stderr)
-            fail()
-        tmp = "%s.pitch.mp4" % base
-        run_ffmpeg(["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", base, "-i", "out%d.wav" % i,
-                    "-af", "asetrate=%s,bass=f=200:g=1.2:transform=5" % sr,
-                    "-map", "0:v", "-map", "1:a",
-                    "-preset", "ultrafast", "-qp", "1", "-c:a", "pcm_s16le", tmp])
-        os.replace(tmp, base)
 
     # Build lossless intermediate 0.mov (always trimmed to dur, infinite loop)
     cmd0 = [
@@ -169,19 +127,11 @@ def main():
     truthy = no_trim in ("true", "yes", "+")
     falsy = no_trim in ("false", "no", "-")
 
-    multipitch = bool(ffmpeg_args) and "$i" in ffmpeg_args[-1]
-    render_ffmpeg_args = ffmpeg_args[:-1] if multipitch else ffmpeg_args
-
-    def out_name(i):
-        if multipitch:
-            return render_args([ffmpeg_args[-1]], i)[0]
-        return "%d.%s" % (i, input_format)
-
     def render_cmd(src, dst, i):
         cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
         if not truthy:
             cmd += ["-stream_loop", "1"]
-        cmd += ["-i", src] + render_args(render_ffmpeg_args, i)
+        cmd += ["-i", src] + render_args(ffmpeg_args, i)
         if not truthy:
             cmd += ["-t", dur]
         cmd += ["-movflags", "+faststart", dst]
@@ -191,19 +141,9 @@ def main():
         print("invalid no_trim value: %s (expected true/yes/+ or false/no/-)" % no_trim, file=sys.stderr)
         fail()
 
-    if multipitch:
-        ensure_program()
-        sr = ffprobe("0.mov", ["-select_streams", "a:0", "-show_entries", "stream=sample_rate"])
-
-    if multipitch:
-        run_ffmpeg(render_cmd("0.mov", out_name(0), 0))
-        for i in range(1, abs_exports + 1):
-            run_ffmpeg(render_cmd(out_name(i - 1), out_name(i), i))
-            pitch_export(i, out_name(i))
-    else:
-        run_ffmpeg(render_cmd("0.mov", out_name(1), 0))
-        for i in range(1, abs_exports + 1):
-            run_ffmpeg(render_cmd(out_name(i), out_name(i + 1), i))
+    run_ffmpeg(render_cmd("0.mov", "1.%s" % input_format, 0))
+    for i in range(1, abs_exports + 1):
+        run_ffmpeg(render_cmd("%d.%s" % (i, input_format), "%d.%s" % (i + 1, input_format), i))
 
     # Build concat list
     if exports < 0:
@@ -212,7 +152,7 @@ def main():
         seq = range(1, abs_exports + 1)
     with open("concat.txt", "w", encoding="utf-8") as f:
         for n in seq:
-            f.write("file '%s'\n" % out_name(n))
+            f.write("file '%d.%s'\n" % (n, input_format))
 
     codec_args = {
         "mkv": ["-c:v", "mpeg2video", "-q:v", "1", "-c:a", "flac", "-pix_fmt", "yuv420p", "-bufsize", "16M", "-movflags", "+faststart", "-threads", "0"],

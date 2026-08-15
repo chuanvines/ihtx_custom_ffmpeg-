@@ -10,7 +10,6 @@ a simple `Done: <output> (<size>, took X seconds)` line when finished.
 ## Requirements
 
 - FFmpeg + FFprobe in PATH (both scripts call `ffmpeg`/`ffprobe`)
-- Linux: `curl` (only needed for Multipitch mode downloads)
 
 ## Usage
 
@@ -60,16 +59,6 @@ Reverse order (exports negative):
 
 ```bash
 .\icf+.exe input.mp4 output.mp4 -5 0.4 - mov mp4 -vf "setpts=0.5*PTS" -c:v ffv1 -c:a pcm_s16le
-```
-
-## Multipitch mode
-
-If the **last** FFmpeg arg is an output filename containing `$i`, Multipitch mode
-activates: each export gets its audio pitch-shifted (`asetrate`, bass boost, custom
-pitch shifter binary downloaded once from `https://file.garden/aTXso15ukD3mnuPI/multipitch`).
-
-```bash
-.\icf+.exe input.mp4 output.mp4 15 0.4 - mov mp4 -qp 1 -c:a pcm_s16le a$i.mp4
 ```
 
 ## Install
